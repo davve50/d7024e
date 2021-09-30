@@ -14,17 +14,30 @@ type Network struct {
 	kademlia *Kademlia
 }
 
+var k int = 20
+
+/* RPC 			= Command
+ * SourceID		= Id of source node
+ * SourceIP 	= Adress of source
+ * TargetID		= Adress/file to find/store
+ * Contacts 	= List of contacts used by findnode/findvalue
+ * Value		= Resulting value of a call in []byte's
+ */
+
 type packet struct {
-	Rpc      		string     		`json:",omitempty"`
-	Id       		string     		`json:",omitempty"`
-	Contacts 		[]Contact  		`json:",omitempty"`
-	Target 			string 			`json:",omitempty"`
-	Value 			[]byte  		`json:",omitempty"`
+	RPC      string    `json:",omitempty"` // ping, find_value
+	SourceID string    `json:",omitempty"` // NODE_123, NODE_2342
+	SourceIP string    `json:",omitempty"` // 192.168.1.1, 127.0.0.1
+	TargetID string    `json:",omitempty"` // NODE_235235, NODE_76457
+	Contacts []Contact `json:",omitempty"` // []Contacts of closest
+	Value    []byte    `json:",omitempty"` // 123, 4323452, from hashmap
 }
 
 func (network *Network) Listen(ip string, port int) {
 	time.Sleep(time.Millisecond * 5)
-	pc, err1 := net.ResolveUDPAddr("udp", ":8080") // TODO: Port + ip
+	adress := fmt.Sprintf("%s:%d", ip, port)
+	pc, err1 := net.ResolveUDPAddr("udp", adress)
+	fmt.Println("Kademlia started on adress: " + adress)
 	connection, err2 := net.ListenUDP("udp", pc)
 	if (err1 != nil) || (err2 != nil) {
 		fmt.Println("Error :'(")
@@ -38,95 +51,95 @@ func (network *Network) Listen(ip string, port int) {
 			log.Fatal(err)
 		}
 		json.Unmarshal(buffer[:n], &packet)
+		packet.SourceIP = connection.RemoteAddr().String()
 		go network.HandleRPC(packet, connection, addr)
 	}
 }
 
 // Checking which rpc recieved
 func (network *Network) HandleRPC(packet packet, connection *net.UDPConn, addr *net.UDPAddr) {
-	switch packet.Rpc {
+	switch packet.RPC {
 	case "ping":
 		//do ping stuff
-		network.HandlePingPongPacket(packet, connection, addr)
+		network.HandlePingPongPacket(packet)
 	case "store":
 		//do store stuff
-		network.HandleStorePacket(packet, connection, addr)
+		network.HandleStorePacket(packet)
 	case "find_node":
 		//do find_node stuff
-		network.HandleFindNodePacket(packet, connection, addr)
+		network.HandleFindNodePacket(packet)
 	case "find_value":
 		//do find_value stuff
-		network.HandleFindValuePacket(packet, connection, addr)
+		network.HandleFindValuePacket(packet)
 	default:
 		//if all else fails, then something is wrong
-		fmt.Println("'" + packet.Rpc + "' is not an valid RPC!")
+		fmt.Println("'" + packet.RPC + "' is not an valid RPC!")
 	}
 }
 
-func (network *Network) HandlePingPongPacket(packet packet, connection *net.UDPConn, addr *net.UDPAddr) {
-	newNode := NewContact(NewKademliaID(packet.Id), addr.IP.String())
+func (network *Network) HandlePingPongPacket(packet packet) { //, connection *net.UDPConn, addr *net.UDPAddr) {
+	newNode := NewContact(NewKademliaID(packet.SourceID), packet.SourceIP)
 	network.kademlia.routingtab.AddContact(newNode)
 
-	if strings.ToLower(packet.Rpc) == "ping" {
+	if strings.ToLower(packet.RPC) == "ping" {
 		network.SendPongPacket(&newNode)
 	} else {
 		fmt.Println("New contact added to bucket: " + newNode.Address)
 	}
 }
 
-func (network *Network) HandleStorePacket(packet packet, contact *Contact) {
+func (network *Network) HandleStorePacket(packet packet) {
 	// TOTO - Africa
-	value, ok := network.kademlia.hash[packet.Target]
+	_, ok := network.kademlia.hash[packet.TargetID]
 
-	if (!ok) {
-		network.kademlia.hash[packet.Target] = packet.Value
-		// skicka OK
-	} else{
-		
-	}
+	if !ok {
+		network.kademlia.hash[packet.TargetID] = packet.Value
 
-}
-
-func (network *Network) HandleFindNodePacket(packet packet, connection *net.UDPConn, addr *net.UDPAddr) {
-	closeContacts := network.kademlia.routingtab.FindClosestContacts(NewKademliaID(packet.Id), 20) // <-- 20 ksk ska vara en global def
-	newPacket, err := json.Marshal(network.CreatePacket("", nil, closeContacts, "", nil))
-	log.Println(err)
-	_, err = connection.WriteToUDP(newPacket, addr)
-	log.Println(err)
-	fmt.Println("SENT: contacts")
-
-	/*
-		Routingtable skall ändras bara av en go routine
-		Tänk mer simpelt än komplext
-	*/
-}
-
-func (network *Network) HandleFindValuePacket(packet packet, contact *Contact) {
-	value, ok := network.kademlia.hash[packet.Id]
-
-	if (!ok) {
-		closeContacts := network.kademlia.routingtab.FindClosestContacts(NewKademliaID(packet.Id), 20)
-		newPacket := network.CreatePacket("find_value", nil, closeContacts, "", nil)
-		_, err := network.SendPacket(newPacket, contact.Address)
+		newPacket := network.CreatePacket("", packet.SourceID, "", nil, []byte("SUCCESS"))
+		_, err := network.SendPacket(newPacket, packet.SourceIP)
 		log.Println(err)
-	} else{
-		newPacket := network.CreatePacket("find_value", nil, nil, "", value)
-		_, err := network.SendPacket(newPacket, contact.Address)
+	} else {
+		newPacket := network.CreatePacket("", packet.SourceID, "", nil, []byte("FAIL"))
+		_, err := network.SendPacket(newPacket, packet.SourceIP)
+		log.Println(err)
+	}
+}
+
+func (network *Network) HandleFindNodePacket(packet packet) {
+	closeContacts := network.kademlia.routingtab.FindClosestContacts(NewKademliaID(packet.TargetID), k) // <-- 20 ksk ska vara en global def
+
+	newPacket := network.CreatePacket("", packet.SourceID, "", closeContacts, nil)
+	_, err := network.SendPacket(newPacket, packet.SourceIP)
+	log.Println(err)
+}
+
+func (network *Network) HandleFindValuePacket(packet packet) {
+	value, ok := network.kademlia.hash[packet.TargetID]
+
+	if !ok {
+		closeContacts := network.kademlia.routingtab.FindClosestContacts(NewKademliaID(packet.TargetID), k)
+		newPacket := network.CreatePacket("find_value", packet.SourceID, "", closeContacts, nil)
+		_, err := network.SendPacket(newPacket, packet.SourceIP)
+		log.Println(err)
+	} else {
+		newPacket := network.CreatePacket("find_value", packet.SourceID, "", nil, value)
+		_, err := network.SendPacket(newPacket, packet.SourceIP)
 		log.Println(err)
 	}
 }
 
 // Creates an RPC packet containing sender data and possibility for contact array
-func (network *Network) CreatePacket(rpc string, contact *Contact, contacts []Contact, target string, value []byte) *packet {
+func (network *Network) CreatePacket(rpc string, sourceid string, targetid string, contacts []Contact, value []byte) *packet {
 	createdPacket := &packet{
-		Rpc:      rpc,
-		Id:       contact.ID.String(),
+		RPC:      rpc,
+		SourceID: sourceid,
+		TargetID: targetid,
 		Contacts: contacts,
-		Target: target,
-		Value: value,
+		Value:    value,
 	}
 	return createdPacket
 }
+
 func (network *Network) SendPacket(packet *packet, addr string) (*net.UDPConn, error) {
 	remoteAddress, err := net.ResolveUDPAddr("udp", addr)
 	connection, err := net.DialUDP("udp", nil, remoteAddress)
@@ -140,13 +153,13 @@ func (network *Network) SendPacket(packet *packet, addr string) (*net.UDPConn, e
 }
 
 func (network *Network) SendPongPacket(contact *Contact) {
-	packet := network.CreatePacket("pong", network.me, nil, "", nil)
+	packet := network.CreatePacket("pong", network.me.ID.String(), "", nil, nil)
 	_, err := network.SendPacket(packet, contact.Address)
 	log.Println(err)
 }
 
 func (network *Network) SendPingPacket(contact *Contact) (packet, error) {
-	pack := network.CreatePacket("ping", network.me, nil, "", nil)
+	pack := network.CreatePacket("ping", network.me.ID.String(), "", nil, nil)
 	connection, err := network.SendPacket(pack, contact.Address)
 	newPacket := packet{}
 	responsePacket := make([]byte, 1024)
@@ -158,6 +171,7 @@ func (network *Network) SendPingPacket(contact *Contact) (packet, error) {
 			break
 		}
 		err = json.Unmarshal(responsePacket[:size], &newPacket)
+		newPacket.SourceIP = connection.RemoteAddr().String()
 		log.Println(err)
 		return newPacket, nil
 	}
@@ -166,6 +180,11 @@ func (network *Network) SendPingPacket(contact *Contact) (packet, error) {
 
 func (network *Network) SendFindNodePacket(contact *Contact) {
 	// TODO
+	/*
+		1. Send packet <--- Listen() => source
+		2. Wait for response <--- =>>> source
+		3. React to response <--- createPacket \n packet.Source = Network.me
+	*/
 }
 
 func (network *Network) SendFindDataPacket(hash string) {
