@@ -15,9 +15,11 @@ type Network struct {
 }
 
 type packet struct {
-	Rpc      string    `json:",omitempty"`
-	Id       string    `json:",omitempty"`
-	Contacts []Contact `json:",omitempty"`
+	Rpc      		string     		`json:",omitempty"`
+	Id       		string     		`json:",omitempty"`
+	Contacts 		[]Contact  		`json:",omitempty"`
+	Target 			string 			`json:",omitempty"`
+	Value 			[]byte  		`json:",omitempty"`
 }
 
 func (network *Network) Listen(ip string, port int) {
@@ -66,19 +68,28 @@ func (network *Network) HandlePingPongPacket(packet packet, connection *net.UDPC
 	network.kademlia.routingtab.AddContact(newNode)
 
 	if strings.ToLower(packet.Rpc) == "ping" {
-		network.SendPongPacket(connection, addr, network.me)
+		network.SendPongPacket(&newNode)
 	} else {
 		fmt.Println("New contact added to bucket: " + newNode.Address)
 	}
 }
 
-func (network *Network) HandleStorePacket(packet packet, connection *net.UDPConn, addr *net.UDPAddr) {
+func (network *Network) HandleStorePacket(packet packet, contact *Contact) {
 	// TOTO - Africa
+	value, ok := network.kademlia.hash[packet.Target]
+
+	if (!ok) {
+		network.kademlia.hash[packet.Target] = packet.Value
+		// skicka OK
+	} else{
+		
+	}
+
 }
 
 func (network *Network) HandleFindNodePacket(packet packet, connection *net.UDPConn, addr *net.UDPAddr) {
-	closestContacts := network.kademlia.routingtab.FindClosestContacts(NewKademliaID(packet.Id), 20) // <-- 20 ksk ska vara en global def
-	newPacket, err := json.Marshal(network.CreatePacket("", nil, closestContacts))
+	closeContacts := network.kademlia.routingtab.FindClosestContacts(NewKademliaID(packet.Id), 20) // <-- 20 ksk ska vara en global def
+	newPacket, err := json.Marshal(network.CreatePacket("", nil, closeContacts, "", nil))
 	log.Println(err)
 	_, err = connection.WriteToUDP(newPacket, addr)
 	log.Println(err)
@@ -90,30 +101,67 @@ func (network *Network) HandleFindNodePacket(packet packet, connection *net.UDPC
 	*/
 }
 
-func (network *Network) HandleFindValuePacket(packet packet, connection *net.UDPConn, addr *net.UDPAddr) {
-	// TODO
+func (network *Network) HandleFindValuePacket(packet packet, contact *Contact) {
+	value, ok := network.kademlia.hash[packet.Id]
+
+	if (!ok) {
+		closeContacts := network.kademlia.routingtab.FindClosestContacts(NewKademliaID(packet.Id), 20)
+		newPacket := network.CreatePacket("find_value", nil, closeContacts, "", nil)
+		_, err := network.SendPacket(newPacket, contact.Address)
+		log.Println(err)
+	} else{
+		newPacket := network.CreatePacket("find_value", nil, nil, "", value)
+		_, err := network.SendPacket(newPacket, contact.Address)
+		log.Println(err)
+	}
 }
 
 // Creates an RPC packet containing sender data and possibility for contact array
-func (network *Network) CreatePacket(rpc string, contact *Contact, contacts []Contact) *packet {
+func (network *Network) CreatePacket(rpc string, contact *Contact, contacts []Contact, target string, value []byte) *packet {
 	createdPacket := &packet{
 		Rpc:      rpc,
 		Id:       contact.ID.String(),
 		Contacts: contacts,
+		Target: target,
+		Value: value,
 	}
 	return createdPacket
 }
-
-func (network *Network) SendPongPacket(connection *net.UDPConn, addr *net.UDPAddr, me *Contact) {
-	packet, err := json.Marshal(network.CreatePacket("pong", me, nil))
+func (network *Network) SendPacket(packet *packet, addr string) (*net.UDPConn, error) {
+	remoteAddress, err := net.ResolveUDPAddr("udp", addr)
+	connection, err := net.DialUDP("udp", nil, remoteAddress)
 	log.Println(err)
-	_, err = connection.WriteToUDP(packet, addr)
+	defer connection.Close()
+	marshalledPacket, err := json.Marshal(packet)
+	_, err = connection.Write(marshalledPacket)
 	log.Println(err)
-	fmt.Println("SENT: pong ", me)
+	fmt.Println("SENT: " + string(marshalledPacket))
+	return connection, err
 }
 
-func (network *Network) SendPingPacket(contact *Contact) {
-	// TODO
+func (network *Network) SendPongPacket(contact *Contact) {
+	packet := network.CreatePacket("pong", network.me, nil, "", nil)
+	_, err := network.SendPacket(packet, contact.Address)
+	log.Println(err)
+}
+
+func (network *Network) SendPingPacket(contact *Contact) (packet, error) {
+	pack := network.CreatePacket("ping", network.me, nil, "", nil)
+	connection, err := network.SendPacket(pack, contact.Address)
+	newPacket := packet{}
+	responsePacket := make([]byte, 1024)
+	connection.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	for {
+		size, err := connection.Read(responsePacket)
+		if err != nil {
+			log.Fatal(err)
+			break
+		}
+		err = json.Unmarshal(responsePacket[:size], &newPacket)
+		log.Println(err)
+		return newPacket, nil
+	}
+	return newPacket, err
 }
 
 func (network *Network) SendFindNodePacket(contact *Contact) {
