@@ -5,7 +5,15 @@ type Kademlia struct {
 	hash       map[string][]byte
 }
 
-func (kademlia *Kademlia) LookupContact(target *Contact) {
+func InitKademlia(me Contact) *Kademlia {
+	newKademlia := &Kademlia{
+		routingtab: NewRoutingTable(me),
+		hash:       make(map[string][]byte),
+	}
+	return newKademlia
+}
+
+func (kademlia *Kademlia) LookupContact(me *Contact, target Contact, contacts *[]Contact) {
 	// TODO
 }
 

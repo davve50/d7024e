@@ -7,6 +7,6 @@ import (
 
 func main() {
 	fmt.Println("Starting kademlia..")
-	var node *d7024e.Network
-	node.Listen("localhost", 8080)
+	node := d7024e.Init("localhost", 8080)
+	node.Listen()
 }
