@@ -14,8 +14,6 @@ type Network struct {
 	kademlia *Kademlia
 }
 
-var k int = 20
-
 /* RPC 			= Command
  * SourceID		= Id of source node
  * SourceIP 	= Adress of source
@@ -39,6 +37,7 @@ func Init(ip string, port int) *Network {
 		me:       &me,
 		kademlia: InitKademlia(me),
 	}
+	newNetwork.kademlia.setNetwork(newNetwork)
 	return newNetwork
 }
 
@@ -126,7 +125,7 @@ func (network *Network) HandleStorePacket(packet packet) {
 }
 
 func (network *Network) HandleFindNodePacket(packet packet) {
-	closeContacts := network.kademlia.routingtab.FindClosestContacts(NewKademliaID(packet.TargetID), k) // <-- 20 ksk ska vara en global def
+	closeContacts := network.kademlia.routingtab.FindClosestContacts(NewKademliaID(packet.TargetID), bucketSize)
 
 	createdPacket := network.CreatePacket("", packet.SourceID, "", closeContacts, nil)
 	_, err := network.SendPacket(createdPacket, packet.SourceIP)
@@ -137,7 +136,7 @@ func (network *Network) HandleFindValuePacket(packet packet) {
 	value, ok := network.kademlia.hash[packet.TargetID]
 
 	if !ok {
-		closeContacts := network.kademlia.routingtab.FindClosestContacts(NewKademliaID(packet.TargetID), k)
+		closeContacts := network.kademlia.routingtab.FindClosestContacts(NewKademliaID(packet.TargetID), bucketSize)
 		createdPacket := network.CreatePacket("find_value", packet.SourceID, "", closeContacts, nil)
 		_, err := network.SendPacket(createdPacket, packet.SourceIP)
 		log.Println(err)
@@ -201,7 +200,7 @@ func (network *Network) SendPingPacket(contact *Contact) (packet, error) {
 	return newPacket, err
 }
 
-func (network *Network) SendFindNodePacket(contact *Contact, found chan []Contact) {
+func (network *Network) SendFindNodePacket(contact *Contact, target *Contact, results *[]Contact) {
 	var contacts []Contact
 	createdPacket := network.CreatePacket("find_node", network.me.ID.String(), contact.ID.String(), nil, nil)
 	connection, err := network.SendPacket(createdPacket, contact.Address)
@@ -209,12 +208,14 @@ func (network *Network) SendFindNodePacket(contact *Contact, found chan []Contac
 	newPacket := packet{}
 	responsePacket := make([]byte, 1024)
 	connection.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
-	for {
-		length, err := connection.Read(responsePacket)
-		log.Println(err)
-		err = json.Unmarshal(responsePacket[:length], &newPacket)
-	}
-	found <- contacts // Channel here maybe???
+	//for {
+	length, err := connection.Read(responsePacket)
+	log.Println(err)
+	err = json.Unmarshal(responsePacket[:length], &newPacket)
+	//}
+
+	res := append(*results, contacts...)
+	*results = res
 }
 
 func (network *Network) SendFindValuePacket(contact *Contact, hash string) {
