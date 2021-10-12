@@ -5,7 +5,7 @@ import (
 	"net"
 )
 
-func main(){
+func main3() {
 	ln, err := net.Listen("tcp", "localhost:8080")
 
 	if err != nil {

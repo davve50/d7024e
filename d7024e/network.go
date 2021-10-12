@@ -50,8 +50,12 @@ func (network *Network) JoinNetwork(ip string) {
 
 func (network *Network) FindAllNodes(target *Contact) []Contact {
 	contacts := make([]Contact, 0)
-	network.kademlia.LookupContact(network.me, *target, &contacts)
+	network.kademlia.LookupContact(*target, &contacts)
 	return contacts
+}
+
+func (network *Network) GetKademlia() *Kademlia {
+	return network.kademlia
 }
 
 func (network *Network) Listen() {
@@ -201,24 +205,22 @@ func (network *Network) SendPingPacket(contact *Contact) (packet, error) {
 }
 
 func (network *Network) SendFindNodePacket(contact *Contact, target *Contact, results *[]Contact) {
-	var contacts []Contact
 	createdPacket := network.CreatePacket("find_node", network.me.ID.String(), contact.ID.String(), nil, nil)
 	connection, err := network.SendPacket(createdPacket, contact.Address)
 	log.Println(err)
 	newPacket := packet{}
 	responsePacket := make([]byte, 1024)
 	connection.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
-	//for {
+
 	length, err := connection.Read(responsePacket)
 	log.Println(err)
 	err = json.Unmarshal(responsePacket[:length], &newPacket)
-	//}
 
-	res := append(*results, contacts...)
+	res := append(*results, newPacket.Contacts...)
 	*results = res
 }
 
-func (network *Network) SendFindValuePacket(contact *Contact, hash string) {
+func (network *Network) SendFindValuePacket(contact *Contact, hash string, resultContacts *[]Contact, resultHash *string) {
 	createdPacket := network.CreatePacket("find_value", network.me.ID.String(), "", nil, []byte(hash))
 	connection, err := network.SendPacket(createdPacket, contact.Address)
 	log.Println(err)
@@ -227,6 +229,11 @@ func (network *Network) SendFindValuePacket(contact *Contact, hash string) {
 	connection.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
 	length, err := connection.Read(responsePacket)
 	err = json.Unmarshal(responsePacket[:length], &newPacket)
+
+	resContacts := append(*resultContacts, newPacket.Contacts...)
+	*resultContacts = resContacts
+
+	*resultHash = string(newPacket.Value)
 
 	// We need to decide what to do after recieving the answer???
 

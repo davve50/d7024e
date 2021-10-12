@@ -7,7 +7,7 @@ import (
 	"net"
 )
 
-func main() {
+func main2() {
 
 	raddr, _ := net.ResolveUDPAddr("udp", "localhost:8080")
 

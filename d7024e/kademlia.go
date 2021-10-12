@@ -35,15 +35,17 @@ func (kademlia *Kademlia) LookupContact(target Contact, contacts *[]Contact) {
 
 	results := make([]Contact, 0)
 
-	vl := &VisitList{
+	vl := &VisitList{ // Checks if SendFindNodePacket for that node has been called
 		list:    make([]Contact, 0),
 		visited: make(map[Contact]bool),
 	}
 
+	resVl := make(map[Contact]bool) // Checks if node has been added to visitList
+
 	// checking my alpha closest nodes
 	for _, node := range alphaClosest {
 		vl.list = append(vl.list, node)
-		vl.visited[node] = true
+		resVl[node] = true
 	}
 
 	// getting contacts from my alpha closest nodes
@@ -59,8 +61,8 @@ func (kademlia *Kademlia) LookupContact(target Contact, contacts *[]Contact) {
 		// Loop through and check if any of the found contacts are not added to the list of to be checked
 		for _, node := range results {
 			if (node.Address != kademlia.network.me.Address) && (node.ID != nil) {
-				if !vl.visited[node] {
-					vl.visited[node] = true
+				if !resVl[node] {
+					resVl[node] = true
 					node.CalcDistance(kademlia.network.me.ID)
 					vl.list = append(vl.list, node)
 				}
@@ -97,20 +99,112 @@ func (kademlia *Kademlia) LookupContact(target Contact, contacts *[]Contact) {
 	}
 
 	if len(vl.list) > bucketSize {
-		*contacts = vl.list[:20]
+		*contacts = vl.list[:bucketSize]
 	} else {
 		*contacts = vl.list
 	}
 }
 
-func (kademlia *Kademlia) LookupData(hash string) {
-	// TODO
+func (kademlia *Kademlia) LookupData(hash string, value *string, contacts *[]Contact) {
+	nodesToCheck := 0
+
+	// We store results from SendFindValuePacket in these
+	resultContacts := make([]Contact, 0)
+	resultHash := ""
+
+	target := NewContact(NewKademliaID(hash), "")
+	alphaClosest := kademlia.routingtab.FindClosestContacts(target.ID, alpha)
+	closest := alphaClosest[0]
+
+	noValueList := make([]Contact, 0)
+
+	vl := &VisitList{ // Checks if SendFindValuePacket for that node has been called
+		list:    make([]Contact, 0),
+		visited: make(map[Contact]bool),
+	}
+
+	resVl := make(map[Contact]bool) // Checks if node has been added to visitList
+
+	// checking my alpha closest nodes
+	for _, node := range alphaClosest {
+		vl.list = append(vl.list, node)
+		resVl[node] = true
+	}
+
+	//Check alpha closests nodes if someone knows value
+	for nodesToCheck < len(vl.list) {
+		nodesToCheck++
+		kademlia.network.SendFindValuePacket(&vl.list[nodesToCheck], hash, &resultContacts, &resultHash)
+		// If we found a value
+		if resultHash != "" {
+			if len(noValueList) != 0 {
+				fmt.Println("Stored in closest node")
+				kademlia.network.SendStorePacket(&noValueList[0], []byte(resultHash))
+			}
+			*value = resultHash
+			return
+		}
+		for _, node := range resultContacts {
+			if (node.Address != kademlia.network.me.Address) && (node.ID != nil) {
+				node.CalcDistance(kademlia.network.me.ID)
+				noValueList = append(noValueList, node)
+			}
+			noValueList = iSort(noValueList, &target)
+		}
+	}
+
+	// No value found, but up to alpha*k new contacts to ask.
+
+	for nodesToCheck > 0 {
+		// Loop through and check if any of the found contacts are not added to the list of to be checked
+		for _, node := range resultContacts {
+			if (node.Address != kademlia.network.me.Address) && (node.ID != nil) {
+				if !resVl[node] {
+					resVl[node] = true
+					node.CalcDistance(kademlia.network.me.ID)
+					vl.list = append(vl.list, node)
+				}
+			}
+		}
+
+		// Sort the list by lowest distance
+		vl.list = iSort(vl.list, &target)
+		nodesToCheck--
+
+		// If there is a new closest node to the target we need to check the alpha closest nodes
+		if closest.ID.String() != vl.list[0].ID.String() {
+			closest = vl.list[0]
+			for i, node := range vl.list {
+				if i >= alpha {
+					break
+				}
+
+				if !vl.visited[node] {
+					kademlia.network.SendFindValuePacket(&node, hash, &resultContacts, &resultHash)
+					vl.visited[node] = true
+					nodesToCheck++
+				}
+			}
+		} else {
+			break
+		}
+	}
+
+	fmt.Println("[LookupValue] Checking if every node has been visited:")
+	for _, node := range vl.list {
+		fmt.Printf("\t%s = %t\n", node.ID.String(), vl.visited[node])
+	}
+
+	if len(vl.list) > bucketSize {
+		*contacts = vl.list[:bucketSize]
+	} else {
+		*contacts = vl.list
+	}
 }
 
-func (kademlia *Kademlia) Store(key *KademliaID, data []byte) {
+func (kademlia *Kademlia) Store(data []byte) {
 	contacts := make([]Contact, 0)
-	contact := NewContact(key, "")
-	kademlia.LookupContact(contact, &contacts)
+	kademlia.LookupContact(*kademlia.network.me, &contacts)
 	for _, node := range contacts {
 		kademlia.network.SendStorePacket(&node, data)
 	}

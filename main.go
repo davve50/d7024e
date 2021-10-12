@@ -8,5 +8,6 @@ import (
 func main() {
 	fmt.Println("Starting kademlia..")
 	node := d7024e.Init("localhost", 8080)
-	node.Listen()
+	go node.Listen()
+	node.GetKademlia().CLI()
 }
