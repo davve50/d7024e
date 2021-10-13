@@ -30,8 +30,11 @@ func (kademlia *Kademlia) setNetwork(network *Network) {
 func (kademlia *Kademlia) LookupContact(target Contact, contacts *[]Contact) {
 	nodesToCheck := 0
 
+	var closest Contact
 	alphaClosest := kademlia.routingtab.FindClosestContacts(target.ID, alpha)
-	closest := alphaClosest[0]
+	if len(alphaClosest) != 0 {
+		closest = alphaClosest[0]
+	}
 
 	results := make([]Contact, 0)
 
@@ -111,10 +114,13 @@ func (kademlia *Kademlia) LookupData(hash string, value *string, contacts *[]Con
 	// We store results from SendFindValuePacket in these
 	resultContacts := make([]Contact, 0)
 	resultHash := ""
+	var closest Contact
 
 	target := NewContact(NewKademliaID(hash), "")
 	alphaClosest := kademlia.routingtab.FindClosestContacts(target.ID, alpha)
-	closest := alphaClosest[0]
+	if len(alphaClosest) != 0 {
+		closest = alphaClosest[0]
+	}
 
 	noValueList := make([]Contact, 0)
 
@@ -203,6 +209,7 @@ func (kademlia *Kademlia) LookupData(hash string, value *string, contacts *[]Con
 }
 
 func (kademlia *Kademlia) Store(data []byte) {
+	kademlia.hash[kademlia.network.me.ID.String()] = data // This should be an argument
 	contacts := make([]Contact, 0)
 	kademlia.LookupContact(*kademlia.network.me, &contacts)
 	for _, node := range contacts {

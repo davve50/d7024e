@@ -37,6 +37,18 @@ func Init(ip string, port int) *Network {
 		me:       &me,
 		kademlia: InitKademlia(me),
 	}
+	fmt.Println("Kademlia ID: ", me.ID.String())
+	newNetwork.kademlia.setNetwork(newNetwork)
+	return newNetwork
+}
+
+func InitRoot(id string, ip string, port int) *Network {
+	me := NewContact(NewKademliaID(id), fmt.Sprintf("%s:%d", ip, port))
+	newNetwork := &Network{
+		me:       &me,
+		kademlia: InitKademlia(me),
+	}
+	fmt.Println("Kademlia ID: ", me.ID.String())
 	newNetwork.kademlia.setNetwork(newNetwork)
 	return newNetwork
 }
@@ -59,14 +71,13 @@ func (network *Network) GetKademlia() *Kademlia {
 }
 
 func (network *Network) Listen() {
-	time.Sleep(time.Millisecond * 5)
 	pc, err1 := net.ResolveUDPAddr("udp", network.me.Address)
 	fmt.Println("Kademlia started on adress: " + network.me.Address)
 	connection, err2 := net.ListenUDP("udp", pc)
 	if (err1 != nil) || (err2 != nil) {
 		fmt.Println("Error :'(")
 	}
-	defer connection.Close()
+	//defer connection.Close()
 	packet := packet{}
 	for {
 		buffer := make([]byte, 1024)
@@ -167,7 +178,7 @@ func (network *Network) SendPacket(packet *packet, addr string) (*net.UDPConn, e
 	remoteAddress, err := net.ResolveUDPAddr("udp", addr)
 	connection, err := net.DialUDP("udp", nil, remoteAddress)
 	log.Println(err)
-	defer connection.Close()
+	//defer connection.Close()
 	marshalledPacket, err := json.Marshal(packet)
 	_, err = connection.Write(marshalledPacket)
 	log.Println(err)
