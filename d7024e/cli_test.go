@@ -2,14 +2,16 @@ package d7024e
 
 import (
 	"bufio"
+	"fmt"
 	"strings"
 	"testing"
 )
 
 func TestKademlia_CLI(t *testing.T) {
-	//contact := NewContact(NewKademliaID("00000000000000000000000000000000deadc0de"), "localhost:8002")
-	network := Init("localhost", 2020)
+	fmt.Println("[Test CLI]")
+	node := InitRoot("00000000000000000000000000000000deadc0de", "localhost", 8080)
+	go node.Listen()
 
-	network.kademlia.CLI(bufio.NewScanner(strings.NewReader("ez\nput 123\nget 00000000000000000000000000000000deadc0de\nget 2\nexit")))
+	node.kademlia.network.kademlia.CLI(true, bufio.NewScanner(strings.NewReader("ez\nget 00000000000000000000000000000000deadc0de\nget 2\nexit")))
 
 }

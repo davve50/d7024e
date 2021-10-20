@@ -4,40 +4,53 @@ import (
 	"bufio"
 	"fmt"
 	"strings"
+	"time"
 )
 
-func (kad *Kademlia) CLI(scanner *bufio.Scanner) {
+func (kad *Kademlia) CLI(test bool, scanner *bufio.Scanner) {
 	for {
-		fmt.Print("Enter a command: ")
-		//scanner := bufio.NewScanner(reader)
+		if test {
+			fmt.Print("[ROOT] Enter a command: ")
+		} else {
+			fmt.Print("Enter a command: ")
+		}
+
 		scanner.Scan()
 		cmd := scanner.Text()
-		//fmt.Print("Running command: ", cmd)
+		fmt.Println("Running command:", cmd)
 
 		switch {
 		case strings.Contains(cmd, "put "):
-			fmt.Println(kad.hash)
 			hash := cmd[4:]
-			kad.Store([]byte(hash)) // Mayb not correct?
-			fmt.Println(kad.hash)
+			kad.Store([]byte(hash))
 		case strings.Contains(cmd, "get "):
 			hash := cmd[4:]
 			if len(hash) != IDLength*2 {
-				fmt.Println("Wrong input")
+				fmt.Println("[ERROR] Faulty hash")
 				break
 			}
-			value := ""
-			contacts := make([]Contact, 0)
-			kad.LookupData(hash, &value, &contacts)
+			value, contacts := kad.LookupData(hash)
 			fmt.Println("[CLI] Value:", value)
 			fmt.Println("[CLI] Contacts:", contacts)
 		case strings.Contains(cmd, "exit"):
-			//Exit here some otherway
+			packet := kad.network.CreatePacket("stop_rpc", "", "", "", nil, nil)
+			kad.network.SendPacket(packet, kad.network.me.Address)
+			time.Sleep(time.Second * 2)
 			return
-			//os.Exit(0)
-		case strings.Contains(cmd, "sendPing"):
-			contact := NewContact(NewKademliaID("00000000000000000000000000000000deadc0de"), "localhost:8080")
-			kad.network.SendPingPacket(&contact)
+		case strings.Contains(cmd, "list"):
+			fmt.Println("Values stored: ")
+			for key, element := range kad.hash {
+				fmt.Println("\tKey:", key, "=>", "Element:", string(element))
+			}
+		case strings.Contains(cmd, "me"):
+			fmt.Println("ID: ", kad.network.me.ID.String(), " IP: ", kad.network.me.Address)
+		case strings.Contains(cmd, "contacts"):
+			fmt.Println("Saved contacts: ")
+			for _, bucket := range kad.routingtab.buckets {
+				for _, cont := range bucket.GetContactAndCalcDistance(NewKademliaID("0000000000000000000000000000000000000000")) {
+					fmt.Println("\tID: ", cont.ID.String(), " IP: ", cont.Address)
+				}
+			}
 		default:
 			fmt.Println("Error: Wrong command.")
 		}

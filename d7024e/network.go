@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"strings"
 	"time"
 )
 
 type Network struct {
 	me       *Contact
 	kademlia *Kademlia
+	findCont chan []Contact
+	findVal  chan []byte
 }
 
 /* RPC 			= Command
@@ -23,150 +24,187 @@ type Network struct {
  */
 
 type packet struct {
-	RPC      string    `json:",omitempty"` // ping, find_value
-	SourceID string    `json:",omitempty"` // NODE_123, NODE_2342
-	SourceIP string    `json:",omitempty"` // 192.168.1.1, 127.0.0.1
-	TargetID string    `json:",omitempty"` // NODE_235235, NODE_76457
-	Contacts []Contact `json:",omitempty"` // []Contacts of closest
-	Value    []byte    `json:",omitempty"` // 123, 4323452, from hashmap
+	RPC      string    `json:",omitempty"` 
+	SourceID string    `json:",omitempty"` 
+	SourceIP string    `json:",omitempty"` 
+	TargetID string    `json:",omitempty"` 
+	Contacts []Contact `json:",omitempty"` 
+	Value    []byte    `json:",omitempty"` 
 }
 
+// Initialize regular node
 func Init(ip string, port int) *Network {
 	me := NewContact(NewRandomKademliaID(), fmt.Sprintf("%s:%d", ip, port))
 	newNetwork := &Network{
 		me:       &me,
 		kademlia: InitKademlia(me),
+		findCont: make(chan []Contact),
+		findVal:  make(chan []byte),
 	}
+
 	fmt.Println("Kademlia ID: ", me.ID.String())
 	newNetwork.kademlia.setNetwork(newNetwork)
 	return newNetwork
 }
 
+// Initialize root node
 func InitRoot(id string, ip string, port int) *Network {
 	me := NewContact(NewKademliaID(id), fmt.Sprintf("%s:%d", ip, port))
 	newNetwork := &Network{
 		me:       &me,
 		kademlia: InitKademlia(me),
+		findCont: make(chan []Contact),
+		findVal:  make(chan []byte),
 	}
+
 	fmt.Println("Kademlia ID: ", me.ID.String())
 	newNetwork.kademlia.setNetwork(newNetwork)
 	return newNetwork
 }
 
-func (network *Network) JoinNetwork(ip string) {
-	networkContact := NewContact(nil, ip)
-	_, err := network.SendPingPacket(&networkContact)
-	log.Println(err)
-	// Use FindAllNodes and iterate through the results and populate your bucket??
+// Ping & Pong to add node to root
+func (network *Network) JoinNetwork(id string, ip string) {
+	time.Sleep(time.Second * 1)
+	networkContact := NewContact(NewKademliaID(id), ip)
+	network.SendPingPacket(networkContact)
+	if string(<-network.findVal) == "pong" {
+		network.kademlia.routingtab.AddContact(networkContact)
+	}
+
+	// FIND_NODE to populate buckets
+	contacts := network.kademlia.LookupContact(network.me)
+
+	for _, cont := range contacts {
+		if !cont.ID.Equals(network.me.ID) {
+			network.kademlia.routingtab.AddContact(cont)
+		}
+	}
 }
 
-func (network *Network) FindAllNodes(target *Contact) []Contact {
-	contacts := make([]Contact, 0)
-	network.kademlia.LookupContact(*target, &contacts)
-	return contacts
-}
-
+// Returns a kademlia reference
 func (network *Network) GetKademlia() *Kademlia {
 	return network.kademlia
 }
 
+// Pretty printing for debug
+func (packet *packet) String() string {
+	printString := string("\n\tRPC: " + packet.RPC +
+		"\n\tSourceID: " + packet.SourceID +
+		"\n\tSourceIP: " + packet.SourceIP +
+		"\n\tTargetID: " + packet.TargetID)
+	contactsString := "\n\tContacts: \n"
+	for _, contact := range packet.Contacts {
+		contactsString = contactsString + "\t\t" + contact.String() + "\n"
+	}
+	printString = printString + contactsString + "\tValue: " + string(packet.Value)
+
+	return printString
+}
+
+// Listen for packet
 func (network *Network) Listen() {
 	pc, err1 := net.ResolveUDPAddr("udp", network.me.Address)
-	fmt.Println("Kademlia started on adress: " + network.me.Address)
+	fmt.Println("Kademlia is listening on address: " + network.me.Address)
 	connection, err2 := net.ListenUDP("udp", pc)
 	if (err1 != nil) || (err2 != nil) {
 		fmt.Println("Error :'(")
 	}
-	//defer connection.Close()
-	packet := packet{}
+	defer connection.Close()
 	for {
-		buffer := make([]byte, 1024)
+		packet := packet{}
+		buffer := make([]byte, 65536)
+		//fmt.Println("Listening")
 		n, addr, err := connection.ReadFromUDP(buffer)
 		if err != nil {
 			log.Fatal(err)
 		}
 		json.Unmarshal(buffer[:n], &packet)
-		packet.SourceIP = connection.RemoteAddr().String()
-		go network.HandleRPC(packet, connection, addr)
+		//fmt.Println("\033[32m", "RECIEVED <", addr, ">: ", packet.String(), "\033[0m")
+		if packet.RPC == "stop_rpc" {
+			break
+		}
+		newContact := NewContact(NewKademliaID(packet.SourceID), packet.SourceIP)
+		if !newContact.ID.Equals(network.me.ID) {
+			network.kademlia.routingtab.AddContact(newContact)
+		}
+		network.HandleRPC(packet, connection, addr)
 	}
 }
 
-// Checking which rpc recieved
+// Checking which rpc was recieved
 func (network *Network) HandleRPC(packet packet, connection *net.UDPConn, addr *net.UDPAddr) {
 	switch packet.RPC {
 	case "ping":
-		//do ping stuff
-		network.HandlePingPongPacket(packet)
+		network.HandlePingPacket(packet)
+	case "pong":
+		network.findVal <- []byte("pong")
 	case "store":
-		//do store stuff
 		network.HandleStorePacket(packet)
+	case "store_reply":
+		network.findVal <- packet.Value
 	case "find_node":
-		//do find_node stuff
 		network.HandleFindNodePacket(packet)
+	case "find_node_reply":
+		network.findCont <- packet.Contacts
 	case "find_value":
-		//do find_value stuff
 		network.HandleFindValuePacket(packet)
+	case "find_value_reply":
+		network.findVal <- packet.Value
+		network.findCont <- packet.Contacts
 	default:
-		//if all else fails, then something is wrong
 		fmt.Println("'" + packet.RPC + "' is not an valid RPC!")
 	}
 }
 
-func (network *Network) HandlePingPongPacket(packet packet) { //, connection *net.UDPConn, addr *net.UDPAddr) {
+func (network *Network) HandlePingPacket(packet packet) {
 	newNode := NewContact(NewKademliaID(packet.SourceID), packet.SourceIP)
-	network.kademlia.routingtab.AddContact(newNode)
-
-	if strings.ToLower(packet.RPC) == "ping" {
-		network.SendPongPacket(&newNode)
-	} else {
-		fmt.Println("New contact added to bucket: " + newNode.Address)
+	if !newNode.ID.Equals(network.me.ID) {
+		network.kademlia.routingtab.AddContact(newNode)
 	}
+	network.SendPongPacket(newNode)
 }
 
 func (network *Network) HandleStorePacket(packet packet) {
-	_, ok := network.kademlia.hash[packet.TargetID]
+	_, ok := network.kademlia.hash[packet.SourceID]
 
 	if !ok {
-		network.kademlia.hash[packet.TargetID] = packet.Value
+		network.kademlia.hash[packet.SourceID] = packet.Value
 
-		createdPacket := network.CreatePacket("", packet.SourceID, "", nil, []byte("SUCCESS"))
-		_, err := network.SendPacket(createdPacket, packet.SourceIP)
-		log.Println(err)
+		createdPacket := network.CreatePacket("store_reply", network.me.Address, network.me.ID.String(), packet.SourceID, nil, []byte("SUCCESS"))
+		network.SendPacket(createdPacket, packet.SourceIP)
 	} else {
-		createdPacket := network.CreatePacket("", packet.SourceID, "", nil, []byte("FAIL"))
-		_, err := network.SendPacket(createdPacket, packet.SourceIP)
-		log.Println(err)
+		createdPacket := network.CreatePacket("store_reply", network.me.Address, network.me.ID.String(), packet.SourceID, nil, []byte("FAIL"))
+		network.SendPacket(createdPacket, packet.SourceIP)
 	}
 }
 
 func (network *Network) HandleFindNodePacket(packet packet) {
 	closeContacts := network.kademlia.routingtab.FindClosestContacts(NewKademliaID(packet.TargetID), bucketSize)
 
-	createdPacket := network.CreatePacket("", packet.SourceID, "", closeContacts, nil)
-	_, err := network.SendPacket(createdPacket, packet.SourceIP)
-	log.Println(err)
+	createdPacket := network.CreatePacket("find_node_reply", network.me.Address, network.me.ID.String(), packet.SourceID, closeContacts, []byte(""))
+	network.SendPacket(createdPacket, packet.SourceIP)
 }
 
 func (network *Network) HandleFindValuePacket(packet packet) {
-	value, ok := network.kademlia.hash[packet.TargetID]
+	value, ok := network.kademlia.hash[string(packet.Value)]
+	//fmt.Println("\033[31m", ok)
 
 	if !ok {
-		closeContacts := network.kademlia.routingtab.FindClosestContacts(NewKademliaID(packet.TargetID), bucketSize)
-		createdPacket := network.CreatePacket("find_value", packet.SourceID, "", closeContacts, nil)
-		_, err := network.SendPacket(createdPacket, packet.SourceIP)
-		log.Println(err)
+		closeContacts := network.kademlia.routingtab.FindClosestContacts(NewKademliaID(string(packet.Value)), bucketSize)
+		createdPacket := network.CreatePacket("find_value_reply", network.me.Address, network.me.ID.String(), packet.SourceID, closeContacts, []byte(""))
+		network.SendPacket(createdPacket, packet.SourceIP)
 	} else {
-		createdPacket := network.CreatePacket("find_value", packet.SourceID, "", nil, value)
-		_, err := network.SendPacket(createdPacket, packet.SourceIP)
-		log.Println(err)
+		createdPacket := network.CreatePacket("find_value_reply", network.me.Address, network.me.ID.String(), packet.SourceID, nil, value) 
+		network.SendPacket(createdPacket, packet.SourceIP)
 	}
 }
 
-// Creates an RPC packet containing sender data and possibility for contact array
-func (network *Network) CreatePacket(rpc string, sourceid string, targetid string, contacts []Contact, value []byte) *packet {
+// Creates and return a packet
+func (network *Network) CreatePacket(rpc string, sourceip string, sourceid string, targetid string, contacts []Contact, value []byte) *packet {
 	createdPacket := &packet{
 		RPC:      rpc,
 		SourceID: sourceid,
+		SourceIP: sourceip,
 		TargetID: targetid,
 		Contacts: contacts,
 		Value:    value,
@@ -174,92 +212,78 @@ func (network *Network) CreatePacket(rpc string, sourceid string, targetid strin
 	return createdPacket
 }
 
-func (network *Network) SendPacket(packet *packet, addr string) (*net.UDPConn, error) {
+
+func (network *Network) SendPacket(packet *packet, addr string) {
+	// Returns an address of UDP end point
 	remoteAddress, err := net.ResolveUDPAddr("udp", addr)
-	connection, err := net.DialUDP("udp", nil, remoteAddress)
-	log.Println(err)
-	//defer connection.Close()
-	marshalledPacket, err := json.Marshal(packet)
-	_, err = connection.Write(marshalledPacket)
-	log.Println(err)
-	fmt.Println("SENT: " + string(marshalledPacket))
-	return connection, err
-}
-
-func (network *Network) SendPongPacket(contact *Contact) {
-	createdPacket := network.CreatePacket("pong", network.me.ID.String(), "", nil, nil)
-	_, err := network.SendPacket(createdPacket, contact.Address)
-	log.Println(err)
-}
-
-func (network *Network) SendPingPacket(contact *Contact) (packet, error) {
-	createdPacket := network.CreatePacket("ping", network.me.ID.String(), "", nil, nil)
-	connection, err := network.SendPacket(createdPacket, contact.Address)
-	newPacket := packet{}
-	responsePacket := make([]byte, 1024)
-	connection.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
-	for {
-		size, err := connection.Read(responsePacket)
-		// Fix error handler :)))  FIX THIS FIX THIS FIX THIS FIX THIS FIX THIS FIX THIS FIX THIS FIX THIS FIX THIS FIX THIS FIX THIS FIX THIS FIX THIS FIX THIS
-		if err != nil {
-			log.Fatal(err)
-			break
-		}
-		err = json.Unmarshal(responsePacket[:size], &newPacket)
-		newPacket.SourceIP = connection.RemoteAddr().String()
-		newNode := NewContact(NewKademliaID(newPacket.SourceID), newPacket.SourceIP)
-		network.kademlia.routingtab.AddContact(newNode)
+	if err != nil {
 		log.Println(err)
-		return newPacket, nil
 	}
-	return newPacket, err
+
+	// Dial the UDP address
+	connection, err := net.DialUDP("udp", nil, remoteAddress)
+	if err != nil {
+		log.Println(err)
+	}
+	defer connection.Close()
+
+	marshalledPacket, err := json.Marshal(packet)
+	if err != nil {
+		log.Println(err)
+	}
+
+	// Write to connection
+	_, err = connection.Write(marshalledPacket)
+	if err != nil {
+		log.Println(err)
+	}
+	//fmt.Println("\033[33m", "SENT <", addr, ">: ", packet.String(), "\033[0m")
 }
 
-func (network *Network) SendFindNodePacket(contact *Contact, target *Contact, results *[]Contact) {
-	createdPacket := network.CreatePacket("find_node", network.me.ID.String(), contact.ID.String(), nil, nil)
-	connection, err := network.SendPacket(createdPacket, contact.Address)
-	log.Println(err)
-	newPacket := packet{}
-	responsePacket := make([]byte, 1024)
-	connection.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
-
-	length, err := connection.Read(responsePacket)
-	log.Println(err)
-	err = json.Unmarshal(responsePacket[:length], &newPacket)
-
-	res := append(*results, newPacket.Contacts...)
-	*results = res
+// Create and send ping packet
+func (network *Network) SendPingPacket(contact Contact) {
+	createdPacket := network.CreatePacket("ping", network.me.Address, network.me.ID.String(), contact.ID.String(), nil, nil)
+	network.SendPacket(createdPacket, contact.Address)
 }
 
-func (network *Network) SendFindValuePacket(contact *Contact, hash string, resultContacts *[]Contact, resultHash *string) {
-	createdPacket := network.CreatePacket("find_value", network.me.ID.String(), "", nil, []byte(hash))
-	connection, err := network.SendPacket(createdPacket, contact.Address)
-	log.Println(err)
-	newPacket := packet{}
-	responsePacket := make([]byte, 1024)
-	connection.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
-	length, err := connection.Read(responsePacket)
-	err = json.Unmarshal(responsePacket[:length], &newPacket)
-
-	resContacts := append(*resultContacts, newPacket.Contacts...)
-	*resultContacts = resContacts
-
-	*resultHash = string(newPacket.Value)
-
-	// We need to decide what to do after recieving the answer???
-
-	// PROBABLY NEED SOME CHANNELS FOR THIS SO WILL PROBABLY NEED TO DO
-	// KADEMLIA.GO PROGRAMMING BEFORE WE START THIS MESS
+// Create and send pong packet
+func (network *Network) SendPongPacket(contact Contact) {
+	createdPacket := network.CreatePacket("pong", network.me.Address, network.me.ID.String(), contact.ID.String(), nil, nil)
+	network.SendPacket(createdPacket, contact.Address)
 }
 
-func (network *Network) SendStorePacket(contact *Contact, data []byte) {
-	createdPacket := network.CreatePacket("store", network.me.ID.String(), "", nil, data)
-	connection, err := network.SendPacket(createdPacket, contact.Address)
-	log.Println(err)
-	newPacket := packet{}
-	responsePacket := make([]byte, 1024)
-	connection.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
-	length, err := connection.Read(responsePacket)
-	err = json.Unmarshal(responsePacket[:length], &newPacket)
-	fmt.Println(string(newPacket.Value))
+// Create and send FIND_NODE packet
+func (network *Network) SendFindNodePacket(contact Contact, target *Contact) {
+	createdPacket := network.CreatePacket("find_node", network.me.Address, network.me.ID.String(), target.ID.String(), nil, nil)
+	network.SendPacket(createdPacket, contact.Address)
+}
+
+// Create and send FIND_VALUE packet
+func (network *Network) SendFindValuePacket(contact Contact, hash string) {
+	createdPacket := network.CreatePacket("find_value", network.me.Address, network.me.ID.String(), contact.ID.String(), nil, []byte(hash))
+	network.SendPacket(createdPacket, contact.Address)
+}
+
+// Create and send STORE packet
+func (network *Network) SendStorePacket(contact Contact, data []byte) {
+	createdPacket := network.CreatePacket("store", network.me.Address, network.me.ID.String(), contact.ID.String(), nil, data)
+	network.SendPacket(createdPacket, contact.Address)
+}
+
+// Gotten from https://github.com/holwech/UDP-module/blob/e03eccee9bfb5585d2c27c7e153fef273285099c/communication.go#L15
+func GetLocalIP() string {
+	var localIP string
+	addr, err := net.InterfaceAddrs()
+	if err != nil {
+		fmt.Printf("GetLocalIP in communication failed")
+		return "localhost"
+	}
+	for _, val := range addr {
+		if ip, ok := val.(*net.IPNet); ok && !ip.IP.IsLoopback() {
+			if ip.IP.To4() != nil {
+				localIP = ip.IP.String()
+			}
+		}
+	}
+	return localIP
 }
