@@ -35,7 +35,7 @@ func (kad *Kademlia) CLI(test bool, scanner *bufio.Scanner) {
 		case strings.Contains(cmd, "exit"):
 			packet := kad.network.CreatePacket("stop_rpc", "", "", "", nil, nil)
 			kad.network.SendPacket(packet, kad.network.me.Address)
-			time.Sleep(time.Second * 2)
+			time.Sleep(time.Millisecond * 200)
 			return
 		case strings.Contains(cmd, "list"):
 			fmt.Println("Values stored: ")

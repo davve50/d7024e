@@ -24,12 +24,12 @@ type Network struct {
  */
 
 type packet struct {
-	RPC      string    `json:",omitempty"` 
-	SourceID string    `json:",omitempty"` 
-	SourceIP string    `json:",omitempty"` 
-	TargetID string    `json:",omitempty"` 
-	Contacts []Contact `json:",omitempty"` 
-	Value    []byte    `json:",omitempty"` 
+	RPC      string    `json:",omitempty"`
+	SourceID string    `json:",omitempty"`
+	SourceIP string    `json:",omitempty"`
+	TargetID string    `json:",omitempty"`
+	Contacts []Contact `json:",omitempty"`
+	Value    []byte    `json:",omitempty"`
 }
 
 // Initialize regular node
@@ -194,7 +194,7 @@ func (network *Network) HandleFindValuePacket(packet packet) {
 		createdPacket := network.CreatePacket("find_value_reply", network.me.Address, network.me.ID.String(), packet.SourceID, closeContacts, []byte(""))
 		network.SendPacket(createdPacket, packet.SourceIP)
 	} else {
-		createdPacket := network.CreatePacket("find_value_reply", network.me.Address, network.me.ID.String(), packet.SourceID, nil, value) 
+		createdPacket := network.CreatePacket("find_value_reply", network.me.Address, network.me.ID.String(), packet.SourceID, nil, value)
 		network.SendPacket(createdPacket, packet.SourceIP)
 	}
 }
@@ -211,7 +211,6 @@ func (network *Network) CreatePacket(rpc string, sourceip string, sourceid strin
 	}
 	return createdPacket
 }
-
 
 func (network *Network) SendPacket(packet *packet, addr string) {
 	// Returns an address of UDP end point

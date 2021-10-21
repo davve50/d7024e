@@ -25,8 +25,13 @@ func (kademlia *Kademlia) setNetwork(network *Network) {
 func (kademlia *Kademlia) LookupContact(target *Contact) []Contact {
 	var shortlist ContactCandidates
 	shortlist.contacts = kademlia.routingtab.FindClosestContacts(target.ID, alpha)
-	closestNode := shortlist.contacts[0]
 	var visitedNodes []Contact
+	var closestNode Contact
+	if len(shortlist.contacts) > 0 {
+		closestNode = shortlist.contacts[0]
+	} else {
+		return make([]Contact, 0)
+	}
 
 	for len(visitedNodes) < bucketSize && !Contains(visitedNodes, closestNode) {
 		// for NODES VISITED < 20 AND CLOSESTNODE IS A NEW NODE
@@ -70,7 +75,12 @@ func (kademlia *Kademlia) LookupData(hash string) (string, []Contact) {
 	var shortlist ContactCandidates
 	targetID := NewContact(NewKademliaID(hash), "").ID
 	shortlist.contacts = kademlia.routingtab.FindClosestContacts(targetID, alpha)
-	closestNode := shortlist.contacts[0]
+	var closestNode Contact
+	if len(shortlist.contacts) > 0 {
+		closestNode = shortlist.contacts[0]
+	} else {
+		return "", make([]Contact, 0)
+	}
 	var visitedNodes []Contact
 
 	for len(visitedNodes) < bucketSize && !Contains(visitedNodes, closestNode) {

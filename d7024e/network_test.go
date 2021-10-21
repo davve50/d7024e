@@ -36,6 +36,11 @@ func TestGetKademlia(t *testing.T) {
 		t.Error("Error")
 	}
 }
+func TestGetIp(t *testing.T) {
+	if GetLocalIP() != "" {
+		t.Error("Error")
+	}
+}
 
 func TestHandleRPC(t *testing.T) {
 	network := Init("localhost", 5050)
@@ -49,7 +54,7 @@ func TestHandleRPC(t *testing.T) {
 
 	// Ping:
 
-	//packet = network.CreatePacket("ping", "localhost:8080", network.me.ID.String(), "00000000000000000000000000000000deadc0de", nil, nil)
-	//network.HandleRPC(*packet, nil, nil)
+	packet = network.CreatePacket("ping", "localhost:8080", network.me.ID.String(), "00000000000000000000000000000000deadc0de", nil, nil)
+	network.HandleRPC(*packet, nil, nil)
 
 }
